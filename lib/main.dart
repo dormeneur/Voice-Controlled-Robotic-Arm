@@ -14,7 +14,20 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Robotic Arm Controller',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
+      themeMode: ThemeMode.dark,
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        colorSchemeSeed: const Color(0xFF00BCD4),
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFF0A0E21),
+        cardTheme: CardThemeData(
+          color: const Color(0xFF1A1F38),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+      ),
       home: const HomeScreen(),
     );
   }

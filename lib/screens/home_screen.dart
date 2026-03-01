@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -6,6 +7,12 @@ import '../services/bluetooth_service.dart';
 import '../services/speech_service.dart';
 import '../utils/command_mapper.dart';
 
+// ── Color constants ────────────────────────────────────────────────────
+const _kCyan = Color(0xFF00E5FF);
+const _kBg = Color(0xFF04060E);
+const _kSurface = Color(0xFF0D111D);
+const _kSurfaceLight = Color(0xFF161C2D);
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -13,7 +20,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   final BluetoothService _bluetoothService = BluetoothService();
   final SpeechService _speechService = SpeechService();
 
@@ -22,10 +30,20 @@ class _HomeScreenState extends State<HomeScreen> {
   String _commandStatus = '';
   bool _isListening = false;
 
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulseAnim;
+
   @override
   void initState() {
     super.initState();
     _requestPermissions();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween(begin: 1.0, end: 1.18).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
   }
 
   // ── Permissions ──────────────────────────────────────────────────────
@@ -45,7 +63,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showSnackBar(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: _kSurfaceLight,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
     );
   }
 
@@ -61,22 +85,80 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       showModalBottomSheet(
         context: context,
+        backgroundColor: _kSurface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
         builder: (context) {
-          return ListView.builder(
-            shrinkWrap: true,
-            itemCount: devices.length,
-            itemBuilder: (context, index) {
-              final device = devices[index];
-              return ListTile(
-                leading: const Icon(Icons.bluetooth),
-                title: Text(device.name ?? 'Unknown Device'),
-                subtitle: Text(device.address),
-                onTap: () {
-                  Navigator.pop(context);
-                  _connectToDevice(device);
-                },
-              );
-            },
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Paired Devices',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: devices
+                          .map(
+                            (device) => ListTile(
+                              leading: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: _kCyan.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  Icons.bluetooth,
+                                  color: _kCyan,
+                                  size: 20,
+                                ),
+                              ),
+                              title: Text(
+                                device.name ?? 'Unknown',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              subtitle: Text(
+                                device.address,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.5),
+                                ),
+                              ),
+                              trailing: const Icon(
+                                Icons.chevron_right,
+                                color: Colors.white38,
+                              ),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _connectToDevice(device);
+                              },
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
           );
         },
       );
@@ -89,9 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _connectionStatus = 'Connecting...');
     try {
       await _bluetoothService.connectToDevice(device);
-      setState(() {
-        _connectionStatus = 'Connected to ${device.name}';
-      });
+      setState(() => _connectionStatus = 'Connected to ${device.name}');
     } catch (e) {
       setState(() => _connectionStatus = 'Connection failed');
       _showSnackBar('Failed to connect: $e');
@@ -100,9 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _disconnect() async {
     await _bluetoothService.disconnect();
-    setState(() {
-      _connectionStatus = 'Disconnected';
-    });
+    setState(() => _connectionStatus = 'Disconnected');
   }
 
   // ── Speech ───────────────────────────────────────────────────────────
@@ -129,13 +207,9 @@ class _HomeScreenState extends State<HomeScreen> {
     await _speechService.startListening((text, isFinal) {
       setState(() {
         _recognizedText = text;
-        if (isFinal) {
-          _isListening = false;
-        }
+        if (isFinal) _isListening = false;
       });
-      if (isFinal) {
-        _processCommand(text);
-      }
+      if (isFinal) _processCommand(text);
     });
   }
 
@@ -167,6 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _pulseController.dispose();
     _speechService.stopListening();
     _bluetoothService.disconnect();
     super.dispose();
@@ -177,121 +252,344 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Robotic Arm Controller'),
-        centerTitle: true,
+      backgroundColor: _kBg,
+      body: Stack(
+        children: [
+          // Subtle ambient glow
+          Positioned(
+            top: -100,
+            right: -100,
+            child: Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kCyan.withValues(alpha: 0.1),
+              ),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 80, sigmaY: 80),
+                child: const SizedBox(),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildHeader(),
+                  const SizedBox(height: 32),
+                  _buildConnectionBar(),
+                  const SizedBox(height: 32),
+                  _buildVoiceSection(),
+                  const SizedBox(height: 16),
+                  _buildCommandStatus(),
+                  const SizedBox(height: 32),
+                  _buildManualControls(),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildConnectionCard(),
-            const SizedBox(height: 16),
-            _buildVoiceCard(),
-            const SizedBox(height: 8),
-            _buildCommandStatus(),
-            const SizedBox(height: 16),
-            _buildManualControls(),
-          ],
+    );
+  }
+
+  // ── Header ───────────────────────────────────────────────────────────
+
+  Widget _buildHeader() {
+    return Row(
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [_kCyan, Color(0xFF007A8C)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: _kCyan.withValues(alpha: 0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.precision_manufacturing,
+            color: Colors.white,
+            size: 26,
+          ),
+        ),
+        const SizedBox(width: 16),
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Robotic Arm',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              Text(
+                'Voice & Manual Controller',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white54,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Connection Bar ───────────────────────────────────────────────────
+
+  Widget _buildConnectionBar() {
+    final connected = _bluetoothService.isConnected;
+    final connecting = _connectionStatus == 'Connecting...';
+    final Color statusColor = connected
+        ? const Color(0xFF00E676)
+        : (connecting ? const Color(0xFFFFD600) : Colors.white24);
+    final String statusLabel = connected
+        ? 'SYSTEM CONNECTED'
+        : (connecting ? 'CONNECTING...' : 'DISCONNECTED');
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: connected
+              ? const Color(0xFF00E676).withValues(alpha: 0.2)
+              : Colors.white.withValues(alpha: 0.05),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Glowing status dot
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: statusColor,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: statusColor.withValues(alpha: 0.6),
+                  blurRadius: 8,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  statusLabel,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  connected
+                      ? _connectionStatus.replaceFirst('Connected to ', '')
+                      : 'HC-05 Target',
+                  style: TextStyle(
+                    color: connected ? Colors.white : Colors.white38,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!connected)
+            _pillButton(
+              label: 'Connect',
+              icon: Icons.bluetooth_searching,
+              color: _kCyan,
+              onTap: _showDeviceList,
+            )
+          else
+            _pillButton(
+              label: 'Disconnect',
+              icon: Icons.link_off,
+              color: const Color(0xFFFF1744),
+              onTap: _disconnect,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pillButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(30),
+        onTap: onTap,
+        splashColor: color.withValues(alpha: 0.2),
+        highlightColor: color.withValues(alpha: 0.1),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // ── Connection Card ──────────────────────────────────────────────────
+  // ── Voice Section ────────────────────────────────────────────────────
 
-  Widget _buildConnectionCard() {
-    final connected = _bluetoothService.isConnected;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Icon(
-                  connected
-                      ? Icons.bluetooth_connected
-                      : Icons.bluetooth_disabled,
-                  color: connected ? Colors.blue : Colors.grey,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _connectionStatus,
-                    style: const TextStyle(fontSize: 16),
+  Widget _buildVoiceSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 15,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Recognized text
+          SizedBox(
+            height: 60,
+            child: Center(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                child: Text(
+                  _recognizedText.isEmpty
+                      ? 'Awaiting command...'
+                      : '"$_recognizedText"',
+                  key: ValueKey(_recognizedText),
+                  style: TextStyle(
+                    fontSize: _recognizedText.isEmpty ? 16 : 22,
+                    fontWeight: _recognizedText.isEmpty
+                        ? FontWeight.w400
+                        : FontWeight.w600,
+                    color: _recognizedText.isEmpty
+                        ? Colors.white38
+                        : Colors.white,
+                    letterSpacing: 0.5,
                   ),
+                  textAlign: TextAlign.center,
                 ),
-              ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: connected ? null : _showDeviceList,
-                    icon: const Icon(Icons.bluetooth_searching),
-                    label: const Text('Connect'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: connected ? _disconnect : null,
-                    icon: const Icon(Icons.bluetooth_disabled),
-                    label: const Text('Disconnect'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade100,
+          ),
+          const SizedBox(height: 32),
+          // Mic button with pulse animation
+          GestureDetector(
+            onTap: _toggleListening,
+            child: AnimatedBuilder(
+              animation: _pulseAnim,
+              builder: (context, child) {
+                final double scale = _isListening ? _pulseAnim.value : 1.0;
+                return Transform.scale(
+                  scale: scale,
+                  child: Container(
+                    width: 90,
+                    height: 90,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: _isListening
+                            ? [const Color(0xFFFF1744), const Color(0xFFD50000)]
+                            : [_kCyan, const Color(0xFF00B8D4)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color:
+                              (_isListening ? const Color(0xFFFF1744) : _kCyan)
+                                  .withValues(alpha: 0.4),
+                          blurRadius: _isListening ? 30 : 20,
+                          spreadRadius: _isListening ? 4 : 0,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _isListening ? Icons.graphic_eq : Icons.mic_rounded,
+                      color: Colors.white,
+                      size: 40,
                     ),
                   ),
-                ),
-              ],
+                );
+              },
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── Voice Card ───────────────────────────────────────────────────────
-
-  Widget _buildVoiceCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Text(
-              _recognizedText.isEmpty
-                  ? 'Tap the mic and speak a command'
-                  : _recognizedText,
-              style: TextStyle(
-                fontSize: 18,
-                color: _recognizedText.isEmpty ? Colors.grey : null,
-              ),
-              textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            _isListening ? 'LISTENING' : 'TAP TO SPEAK',
+            style: TextStyle(
+              color: _isListening ? const Color(0xFFFF1744) : Colors.white38,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 2,
             ),
-            const SizedBox(height: 12),
-            GestureDetector(
-              onTap: _toggleListening,
-              child: CircleAvatar(
-                radius: 36,
-                backgroundColor: _isListening ? Colors.red : Colors.blue,
-                child: Icon(
-                  _isListening ? Icons.mic_off : Icons.mic,
-                  color: Colors.white,
-                  size: 32,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _isListening ? 'Listening...' : 'Tap to speak',
-              style: TextStyle(color: _isListening ? Colors.red : Colors.grey),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -300,14 +598,38 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildCommandStatus() {
     if (_commandStatus.isEmpty) return const SizedBox.shrink();
-    return Text(
-      _commandStatus,
-      style: TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.bold,
-        color: _commandStatus.contains('Sent') ? Colors.green : Colors.orange,
+    final bool sent = _commandStatus.contains('Sent');
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+      decoration: BoxDecoration(
+        color: (sent ? const Color(0xFF00E676) : const Color(0xFFFF9100))
+            .withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: (sent ? const Color(0xFF00E676) : const Color(0xFFFF9100))
+              .withValues(alpha: 0.3),
+        ),
       ),
-      textAlign: TextAlign.center,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            sent ? Icons.check_circle_outline : Icons.warning_amber_rounded,
+            color: sent ? const Color(0xFF00E676) : const Color(0xFFFF9100),
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            _commandStatus.toUpperCase(),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: sent ? const Color(0xFF00E676) : const Color(0xFFFF9100),
+              letterSpacing: 1,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -315,61 +637,168 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildManualControls() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Manual Controls',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
+        // Section label
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 16),
+          child: Text(
+            'MANUAL OVERRIDE',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Colors.white.withValues(alpha: 0.35),
+              letterSpacing: 2,
+            ),
+          ),
         ),
-        const SizedBox(height: 8),
-        // Up
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [_controlButton('Up', 'U', Icons.arrow_upward)],
+        // D-Pad Wrapper
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          decoration: BoxDecoration(
+            color: _kSurface,
+            borderRadius: BorderRadius.circular(32),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              _dpadButton(Icons.keyboard_arrow_up, 'U'),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _dpadButton(Icons.keyboard_arrow_left, 'L'),
+                  const SizedBox(width: 64),
+                  _dpadButton(Icons.keyboard_arrow_right, 'R'),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _dpadButton(Icons.keyboard_arrow_down, 'D'),
+            ],
+          ),
         ),
-        // Left / Right
+        const SizedBox(height: 16),
+        // Action row
         Row(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _controlButton('Left', 'L', Icons.arrow_back),
-            const SizedBox(width: 56),
-            _controlButton('Right', 'R', Icons.arrow_forward),
-          ],
-        ),
-        // Down
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [_controlButton('Down', 'D', Icons.arrow_downward)],
-        ),
-        const SizedBox(height: 8),
-        // Action buttons
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _controlButton('Pick', 'P', Icons.pan_tool),
-            _controlButton('Release', 'O', Icons.open_with),
-            _controlButton('Reset', 'X', Icons.restart_alt),
+            Expanded(
+              child: _actionButton(
+                'PICK',
+                'P',
+                Icons.front_hand_outlined,
+                _kCyan,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _actionButton(
+                'RELEASE',
+                'O',
+                Icons.open_in_full,
+                const Color(0xFFFFD600),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _actionButton(
+                'RESET',
+                'X',
+                Icons.restart_alt,
+                const Color(0xFFFF1744),
+              ),
+            ),
           ],
         ),
       ],
     );
   }
 
-  Widget _controlButton(String label, String command, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.all(4),
-      child: ElevatedButton(
-        onPressed: () => _sendCommand(command),
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  Widget _dpadButton(IconData icon, String command) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: _kBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _sendCommand(command),
+          splashColor: _kCyan.withValues(alpha: 0.2),
+          highlightColor: _kCyan.withValues(alpha: 0.1),
+          child: Center(
+            child: Icon(
+              icon,
+              color: Colors.white.withValues(alpha: 0.8),
+              size: 30,
+            ),
+          ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 24),
-            const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 12)),
-          ],
+      ),
+    );
+  }
+
+  Widget _actionButton(
+    String label,
+    String command,
+    IconData icon,
+    Color color,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.15)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _sendCommand(command),
+          splashColor: color.withValues(alpha: 0.2),
+          highlightColor: color.withValues(alpha: 0.1),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            child: Column(
+              children: [
+                Icon(icon, color: color, size: 26),
+                const SizedBox(height: 8),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
