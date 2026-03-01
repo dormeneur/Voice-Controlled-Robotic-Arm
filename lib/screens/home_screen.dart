@@ -174,7 +174,27 @@ class _HomeScreenState extends State<HomeScreen>
       setState(() => _connectionStatus = 'Connected to ${device.name}');
     } catch (e) {
       setState(() => _connectionStatus = 'Connection failed');
-      _showSnackBar('Failed to connect: $e');
+      final errorMessage = _parseBTError(e.toString());
+      _showSnackBar(errorMessage);
+    }
+  }
+
+  String _parseBTError(String error) {
+    // Parse socket errors and show friendly messages
+    if (error.contains('Connection refused')) {
+      return 'Device not responding. Make sure HC-05 is powered and in range.';
+    } else if (error.contains('Operation timed out')) {
+      return 'Connection timed out. The device may be busy or out of range.';
+    } else if (error.contains('Connection reset by peer')) {
+      return 'Connection lost. Try turning the device off and on.';
+    } else if (error.contains('No route to host')) {
+      return 'Cannot reach device. Check if Bluetooth is enabled.';
+    } else if (error.contains('Permission denied')) {
+      return 'Bluetooth permission denied. Check app permissions.';
+    } else if (error.contains('already connected')) {
+      return 'Device is already connected.';
+    } else {
+      return 'Connection failed. Please try again.';
     }
   }
 
