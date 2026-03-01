@@ -24,6 +24,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final BluetoothService _bluetoothService = BluetoothService();
   final SpeechService _speechService = SpeechService();
 
@@ -426,7 +427,10 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: _kBg,
+      drawer: _buildDrawer(),
+      drawerEdgeDragWidth: 40,
       body: Stack(
         children: [
           // Subtle ambient glow
@@ -524,8 +528,6 @@ class _HomeScreenState extends State<HomeScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildHeader(),
-          const SizedBox(height: 14),
-          _buildConnectionBar(),
           const SizedBox(height: 14),
           _buildVoiceSection(),
           const SizedBox(height: 10),
@@ -945,38 +947,42 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Header ───────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
+    final connected = _bluetoothService.isConnected;
+    final connecting = _connectionStatus == 'Connecting...';
+    final Color dotColor = connected
+        ? const Color(0xFF00E676)
+        : (connecting ? const Color(0xFFFFD600) : Colors.white24);
+
     return Row(
       children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [_kCyan, Color(0xFF007A8C)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+        // Menu button
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: _kCyan.withValues(alpha: 0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+            onTap: () => _scaffoldKey.currentState?.openDrawer(),
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: _kSurface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
               ),
-            ],
-          ),
-          child: const Icon(
-            Icons.precision_manufacturing,
-            color: Colors.white,
-            size: 22,
+              child: const Icon(
+                Icons.menu_rounded,
+                color: Colors.white70,
+                size: 22,
+              ),
+            ),
           ),
         ),
         const SizedBox(width: 12),
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
+              const Text(
                 'Robotic Arm',
                 style: TextStyle(
                   fontSize: 20,
@@ -985,13 +991,35 @@ class _HomeScreenState extends State<HomeScreen>
                   letterSpacing: -0.5,
                 ),
               ),
-              Text(
-                'Voice & Manual Controller',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white54,
-                ),
+              Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: dotColor.withValues(alpha: 0.6),
+                          blurRadius: 6,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    connected
+                        ? _connectionStatus.replaceFirst('Connected to ', '')
+                        : (connecting ? 'Connecting...' : 'Not connected'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: connected ? Colors.white54 : Colors.white38,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1000,103 +1028,307 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Connection Bar ───────────────────────────────────────────────────
+  // ── Side Drawer ──────────────────────────────────────────────────────
 
-  Widget _buildConnectionBar() {
+  Widget _buildDrawer() {
     final connected = _bluetoothService.isConnected;
     final connecting = _connectionStatus == 'Connecting...';
     final Color statusColor = connected
         ? const Color(0xFF00E676)
         : (connecting ? const Color(0xFFFFD600) : Colors.white24);
     final String statusLabel = connected
-        ? 'SYSTEM CONNECTED'
+        ? 'CONNECTED'
         : (connecting ? 'CONNECTING...' : 'DISCONNECTED');
+    final keyConfigured = AppConfig.effectiveApiKey.isNotEmpty;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: _kSurface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: connected
-              ? const Color(0xFF00E676).withValues(alpha: 0.2)
-              : Colors.white.withValues(alpha: 0.05),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.4),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
+    return Drawer(
+      backgroundColor: _kBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(right: Radius.circular(24)),
       ),
-      child: Row(
-        children: [
-          // Glowing status dot
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: statusColor,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: statusColor.withValues(alpha: 0.6),
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  statusLabel,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.5,
+      child: SafeArea(
+        child: Column(
+          children: [
+            // Drawer header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [_kCyan, Color(0xFF007A8C)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _kCyan.withValues(alpha: 0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.precision_manufacturing,
+                      color: Colors.white,
+                      size: 22,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  connected
-                      ? _connectionStatus.replaceFirst('Connected to ', '')
-                      : 'HC-05 Target',
-                  style: TextStyle(
-                    color: connected ? Colors.white : Colors.white38,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Settings',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        Text(
+                          'Connection & Config',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white54,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          if (!connected)
-            _pillButton(
-              label: 'Connect',
-              icon: Icons.bluetooth_searching,
-              color: _kCyan,
-              onTap: _showDeviceList,
-            )
-          else
-            _pillButton(
-              label: 'Disconnect',
-              icon: Icons.link_off,
-              color: const Color(0xFFFF1744),
-              onTap: _disconnect,
+            Divider(color: Colors.white.withValues(alpha: 0.06), height: 1),
+            const SizedBox(height: 16),
+
+            // ── Bluetooth Section ──
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _drawerSectionLabel('BLUETOOTH'),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _kSurface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: connected
+                            ? const Color(0xFF00E676).withValues(alpha: 0.2)
+                            : Colors.white.withValues(alpha: 0.05),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: statusColor,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: statusColor.withValues(alpha: 0.6),
+                                    blurRadius: 6,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    statusLabel,
+                                    style: TextStyle(
+                                      color: statusColor,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 1.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    connected
+                                        ? _connectionStatus.replaceFirst(
+                                            'Connected to ',
+                                            '',
+                                          )
+                                        : 'HC-05 Target',
+                                    style: TextStyle(
+                                      color: connected
+                                          ? Colors.white
+                                          : Colors.white38,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          child: _drawerButton(
+                            label: connected ? 'Disconnect' : 'Connect',
+                            icon: connected
+                                ? Icons.link_off
+                                : Icons.bluetooth_searching,
+                            color: connected ? const Color(0xFFFF1744) : _kCyan,
+                            onTap: () {
+                              Navigator.pop(context);
+                              connected ? _disconnect() : _showDeviceList();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-        ],
+            const SizedBox(height: 24),
+
+            // ── AI Settings Section ──
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _drawerSectionLabel('AI CONFIGURATION'),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _kSurface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.05),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        // API Key status
+                        Row(
+                          children: [
+                            Icon(
+                              keyConfigured
+                                  ? Icons.check_circle
+                                  : Icons.warning_amber_rounded,
+                              size: 16,
+                              color: keyConfigured
+                                  ? const Color(0xFF00E676)
+                                  : const Color(0xFFFF9100),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                keyConfigured
+                                    ? 'Gemini API key configured'
+                                    : 'API key not set',
+                                style: TextStyle(
+                                  color: keyConfigured
+                                      ? Colors.white70
+                                      : const Color(0xFFFF9100),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          child: _drawerButton(
+                            label: 'Override API Key',
+                            icon: Icons.key_rounded,
+                            color: _kCyan,
+                            onTap: () {
+                              Navigator.pop(context);
+                              _showApiKeyDialog();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const Spacer(),
+
+            // ── Footer ──
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: Column(
+                children: [
+                  Divider(
+                    color: Colors.white.withValues(alpha: 0.06),
+                    height: 1,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.precision_manufacturing,
+                        size: 14,
+                        color: Colors.white.withValues(alpha: 0.2),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Voice-Controlled Robotic Arm',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.white.withValues(alpha: 0.2),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _pillButton({
+  Widget _drawerSectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: Colors.white.withValues(alpha: 0.3),
+          letterSpacing: 2,
+        ),
+      ),
+    );
+  }
+
+  Widget _drawerButton({
     required String label,
     required IconData icon,
     required Color color,
@@ -1105,19 +1337,18 @@ class _HomeScreenState extends State<HomeScreen>
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         splashColor: color.withValues(alpha: 0.2),
-        highlightColor: color.withValues(alpha: 0.1),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: color.withValues(alpha: 0.3)),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withValues(alpha: 0.25)),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(icon, color: color, size: 18),
               const SizedBox(width: 8),
@@ -1125,9 +1356,8 @@ class _HomeScreenState extends State<HomeScreen>
                 label,
                 style: TextStyle(
                   color: color,
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
                 ),
               ),
             ],
@@ -1201,7 +1431,7 @@ class _HomeScreenState extends State<HomeScreen>
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(
-                            strokeWidth: 2,
+                            strokeWidth: 1,
                             color: _kCyan,
                           ),
                         ),
@@ -1506,37 +1736,66 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         // D-Pad Wrapper
         Container(
-          padding: const EdgeInsets.symmetric(vertical: 20),
+          padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
           decoration: BoxDecoration(
             color: _kSurface,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: _kCyan.withValues(alpha: 0.06)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
+                color: Colors.black.withValues(alpha: 0.4),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
               ),
             ],
           ),
           child: Column(
             children: [
-              _dpadButton(Icons.keyboard_arrow_up, 'U'),
-              const SizedBox(height: 8),
+              // UP
+              _dpadButton(Icons.expand_less_rounded, 'U'),
+              const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _dpadButton(Icons.keyboard_arrow_left, 'L'),
-                  const SizedBox(width: 64),
-                  _dpadButton(Icons.keyboard_arrow_right, 'R'),
+                  // LEFT
+                  _dpadButton(Icons.chevron_left_rounded, 'L'),
+                  // Center indicator
+                  Container(
+                    width: 56,
+                    height: 56,
+                    margin: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _kBg,
+                      border: Border.all(
+                        color: _kCyan.withValues(alpha: 0.12),
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _kCyan.withValues(alpha: 0.08),
+                          blurRadius: 12,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      Icons.control_camera_rounded,
+                      color: _kCyan.withValues(alpha: 0.35),
+                      size: 24,
+                    ),
+                  ),
+                  // RIGHT
+                  _dpadButton(Icons.chevron_right_rounded, 'R'),
                 ],
               ),
-              const SizedBox(height: 8),
-              _dpadButton(Icons.keyboard_arrow_down, 'D'),
+              const SizedBox(height: 10),
+              // DOWN
+              _dpadButton(Icons.expand_more_rounded, 'D'),
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
         // Action row
         Row(
           children: [
@@ -1544,25 +1803,25 @@ class _HomeScreenState extends State<HomeScreen>
               child: _actionButton(
                 'PICK',
                 'P',
-                Icons.front_hand_outlined,
+                Icons.front_hand_rounded,
                 _kCyan,
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: _actionButton(
                 'RELEASE',
                 'O',
-                Icons.open_in_full,
+                Icons.open_in_full_rounded,
                 const Color(0xFFFFD600),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: _actionButton(
                 'RESET',
                 'X',
-                Icons.restart_alt,
+                Icons.restart_alt_rounded,
                 const Color(0xFFFF1744),
               ),
             ),
@@ -1573,34 +1832,42 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _dpadButton(IconData icon, String command) {
-    return Container(
-      width: 72,
-      height: 72,
-      decoration: BoxDecoration(
-        color: _kBg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => _sendCommand(command),
-          splashColor: _kCyan.withValues(alpha: 0.2),
-          highlightColor: _kCyan.withValues(alpha: 0.1),
-          child: Center(
-            child: Icon(
-              icon,
-              color: Colors.white.withValues(alpha: 0.8),
-              size: 34,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: () => _sendCommand(command),
+        splashColor: _kCyan.withValues(alpha: 0.15),
+        highlightColor: _kCyan.withValues(alpha: 0.08),
+        child: Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [_kSurfaceLight, _kBg],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: _kCyan.withValues(alpha: 0.10),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.6),
+                blurRadius: 10,
+                offset: const Offset(0, 5),
+              ),
+              BoxShadow(
+                color: _kCyan.withValues(alpha: 0.04),
+                blurRadius: 16,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Center(
+            child: Icon(icon, color: _kCyan.withValues(alpha: 0.9), size: 40),
           ),
         ),
       ),
@@ -1613,32 +1880,53 @@ class _HomeScreenState extends State<HomeScreen>
     IconData icon,
     Color color,
   ) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _kSurface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.15)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: () => _sendCommand(command),
+        splashColor: color.withValues(alpha: 0.15),
+        highlightColor: color.withValues(alpha: 0.08),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [color.withValues(alpha: 0.08), _kSurface],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: color.withValues(alpha: 0.18),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+              BoxShadow(
+                color: color.withValues(alpha: 0.06),
+                blurRadius: 16,
+                spreadRadius: 1,
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => _sendCommand(command),
-          splashColor: color.withValues(alpha: 0.2),
-          highlightColor: color.withValues(alpha: 0.1),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 20),
+            padding: const EdgeInsets.symmetric(vertical: 22),
             child: Column(
               children: [
-                Icon(icon, color: color, size: 28),
-                const SizedBox(height: 8),
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: color.withValues(alpha: 0.10),
+                    border: Border.all(color: color.withValues(alpha: 0.15)),
+                  ),
+                  child: Icon(icon, color: color, size: 24),
+                ),
+                const SizedBox(height: 10),
                 Text(
                   label,
                   style: TextStyle(
