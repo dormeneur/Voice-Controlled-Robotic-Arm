@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../config/app_config.dart';
 import '../services/bluetooth_service.dart';
+import '../services/gemini_service.dart';
 import '../services/speech_service.dart';
 import '../utils/command_mapper.dart';
 
@@ -29,6 +31,15 @@ class _HomeScreenState extends State<HomeScreen>
   String _recognizedText = '';
   String _commandStatus = '';
   bool _isListening = false;
+  int _selectedTab = 0; // 0: Control, 1: Camera
+  bool _cameraRecording = false;
+
+  // ── AI / Gemini state ──────────────────────────────────────────────
+  final GeminiService _geminiService = GeminiService();
+  bool _aiMode = true;
+  bool _isProcessingAI = false;
+  String _pendingSequence = '';
+  int _activeSequenceIdx = -1;
 
   late final AnimationController _pulseController;
   late final Animation<double> _pulseAnim;
@@ -236,12 +247,55 @@ class _HomeScreenState extends State<HomeScreen>
   // ── Command Processing ───────────────────────────────────────────────
 
   void _processCommand(String text) {
-    final command = CommandMapper.mapCommand(text);
-    if (command != null) {
-      _sendCommand(command);
+    if (_aiMode) {
+      _processWithAI(text);
     } else {
-      setState(() => _commandStatus = 'Command not recognized');
+      final command = CommandMapper.mapCommand(text);
+      if (command != null) {
+        _sendCommand(command);
+      } else {
+        setState(() => _commandStatus = 'Command not recognized');
+      }
     }
+  }
+
+  Future<void> _processWithAI(String text) async {
+    if (AppConfig.effectiveApiKey.isEmpty) {
+      _showSnackBar('Set your Gemini API key in Settings first.');
+      _showApiKeyDialog();
+      return;
+    }
+    setState(() {
+      _isProcessingAI = true;
+      _commandStatus = '';
+      _pendingSequence = '';
+      _activeSequenceIdx = -1;
+    });
+    try {
+      final sequence = await _geminiService.parseSequence(text);
+      setState(() {
+        _pendingSequence = sequence;
+        _isProcessingAI = false;
+      });
+      await _executeSequence(sequence);
+    } catch (e) {
+      setState(() {
+        _isProcessingAI = false;
+        _commandStatus = e.toString().replaceAll('Exception: ', '');
+      });
+    }
+  }
+
+  Future<void> _executeSequence(String sequence) async {
+    for (int i = 0; i < sequence.length; i++) {
+      setState(() => _activeSequenceIdx = i);
+      await _sendCommand(sequence[i]);
+      await Future.delayed(const Duration(milliseconds: 600));
+    }
+    setState(() {
+      _activeSequenceIdx = -1;
+      _commandStatus = 'Sequence complete';
+    });
   }
 
   Future<void> _sendCommand(String command) async {
@@ -251,10 +305,110 @@ class _HomeScreenState extends State<HomeScreen>
     }
     try {
       await _bluetoothService.sendCommand(command);
-      setState(() => _commandStatus = 'Command Sent: $command');
+      setState(() => _commandStatus = 'Sent: $command');
     } catch (e) {
       _showSnackBar('Failed to send command: $e');
     }
+  }
+
+  // ── Settings / API Key ───────────────────────────────────────────────
+
+  void _showApiKeyDialog() {
+    final keyConfigured = AppConfig.effectiveApiKey.isNotEmpty;
+    final controller = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _kSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'Gemini API Key',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  keyConfigured ? Icons.check_circle : Icons.info_outline,
+                  size: 14,
+                  color: keyConfigured
+                      ? const Color(0xFF00E676)
+                      : Colors.white38,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    keyConfigured
+                        ? 'API key is configured'
+                        : 'Add GEMINI_API_KEY to your .env file',
+                    style: TextStyle(
+                      color: keyConfigured
+                          ? const Color(0xFF00E676)
+                          : Colors.white54,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Paste override key...',
+                hintStyle: TextStyle(color: Colors.white24),
+                filled: true,
+                fillColor: _kBg,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: _kCyan.withValues(alpha: 0.3)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.white12),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: _kCyan),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: TextStyle(color: Colors.white38)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _kCyan,
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            onPressed: () {
+              final key = controller.text.trim();
+              if (key.isNotEmpty) {
+                AppConfig.geminiApiKey = key;
+                _showSnackBar('API key override saved.');
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text(
+              'Save',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────
@@ -293,27 +447,498 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildHeader(),
-                  const SizedBox(height: 32),
-                  _buildConnectionBar(),
-                  const SizedBox(height: 32),
-                  _buildVoiceSection(),
-                  const SizedBox(height: 16),
-                  _buildCommandStatus(),
-                  const SizedBox(height: 32),
-                  _buildManualControls(),
-                  const SizedBox(height: 24),
+            child: Column(
+              children: [
+                // Tab Navigation
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 10,
+                  ),
+                  child: _buildTabBar(),
+                ),
+                // Tab Content
+                Expanded(
+                  child: _selectedTab == 0
+                      ? _buildControlView()
+                      : _buildCameraView(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _kSurface.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          Expanded(child: _buildTabButton('CONTROL', 0)),
+          Expanded(child: _buildTabButton('CAMERA', 1)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabButton(String label, int index) {
+    final isSelected = _selectedTab == index;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedTab = index),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? _kCyan.withValues(alpha: 0.2)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: isSelected
+              ? Border.all(color: _kCyan.withValues(alpha: 0.4))
+              : null,
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: isSelected ? _kCyan : Colors.white54,
+            letterSpacing: 1.5,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildControlView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildHeader(),
+          const SizedBox(height: 14),
+          _buildConnectionBar(),
+          const SizedBox(height: 14),
+          _buildVoiceSection(),
+          const SizedBox(height: 10),
+          _buildCommandStatus(),
+          const SizedBox(height: 14),
+          _buildManualControls(),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildCameraFeed(),
+          const SizedBox(height: 20),
+          _buildCameraControls(),
+          const SizedBox(height: 20),
+          _buildCameraStats(),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraFeed() {
+    return Container(
+      height: 320,
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _kCyan.withValues(alpha: 0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          // Dummy video feed
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  const Color(0xFF0F1419),
+                  const Color(0xFF1A2332),
+                  const Color(0xFF0F1419),
                 ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.videocam,
+                    size: 56,
+                    color: _kCyan.withValues(alpha: 0.3),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'CAMERA FEED',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: _kCyan.withValues(alpha: 0.4),
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Ready for streaming',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white.withValues(alpha: 0.3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Recording indicator
+          Positioned(
+            top: 16,
+            right: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: _cameraRecording
+                    ? const Color(0xFFFF1744)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _cameraRecording
+                      ? const Color(0xFFFF1744)
+                      : Colors.white.withValues(alpha: 0.15),
+                  width: 2,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_cameraRecording)
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  if (_cameraRecording) const SizedBox(width: 6),
+                  Text(
+                    _cameraRecording ? 'RECORDING' : 'STANDBY',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: _cameraRecording ? Colors.white : Colors.white54,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Grid overlay
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: _kCyan.withValues(alpha: 0.1)),
+                ),
+                child: Column(
+                  children: List.generate(
+                    3,
+                    (i) => Expanded(
+                      child: Row(
+                        children: List.generate(
+                          3,
+                          (j) => Expanded(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  right: i < 2
+                                      ? BorderSide(
+                                          color: _kCyan.withValues(alpha: 0.05),
+                                        )
+                                      : BorderSide.none,
+                                  bottom: j < 2
+                                      ? BorderSide(
+                                          color: _kCyan.withValues(alpha: 0.05),
+                                        )
+                                      : BorderSide.none,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildCameraControls() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 12),
+            child: Text(
+              'CAMERA CONTROLS',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: Colors.white.withValues(alpha: 0.35),
+                letterSpacing: 2,
+              ),
+            ),
+          ),
+          // Pan/Tilt controls
+          Column(
+            children: [
+              _cameraControlButton(
+                Icons.keyboard_arrow_up,
+                'PAN UP',
+                Colors.blue,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: _cameraControlButton(
+                      Icons.keyboard_arrow_left,
+                      'LEFT',
+                      Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _cameraControlButton(
+                      Icons.center_focus_strong,
+                      'CENTER',
+                      _kCyan,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _cameraControlButton(
+                      Icons.keyboard_arrow_right,
+                      'RIGHT',
+                      Colors.blue,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _cameraControlButton(
+                Icons.keyboard_arrow_down,
+                'PAN DOWN',
+                Colors.blue,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Zoom and recording controls
+          Row(
+            children: [
+              Expanded(
+                child: _cameraActionButton(
+                  'ZOOM -',
+                  Icons.zoom_out,
+                  Colors.amber,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _cameraActionButton(
+                  'ZOOM +',
+                  Icons.zoom_in,
+                  Colors.amber,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _cameraActionButton(
+                  _cameraRecording ? 'STOP' : 'RECORD',
+                  _cameraRecording
+                      ? Icons.stop_circle
+                      : Icons.fiber_manual_record,
+                  _cameraRecording ? const Color(0xFFFF1744) : _kCyan,
+                  onTap: () =>
+                      setState(() => _cameraRecording = !_cameraRecording),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cameraControlButton(IconData icon, String label, Color color) {
+    return Container(
+      height: 56,
+      decoration: BoxDecoration(
+        color: _kBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {},
+          splashColor: color.withValues(alpha: 0.2),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 20, color: color),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cameraActionButton(
+    String label,
+    IconData icon,
+    Color color, {
+    VoidCallback? onTap,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.15)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap ?? () {},
+          splashColor: color.withValues(alpha: 0.2),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 20, color: color),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCameraStats() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _statItem('RESOLUTION', '1920×1080', _kCyan),
+          _statItem('FPS', '30', Colors.amber),
+          _statItem('LATENCY', '~100ms', Colors.green),
+        ],
+      ),
+    );
+  }
+
+  Widget _statItem(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: Colors.white.withValues(alpha: 0.4),
+            letterSpacing: 1,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
+      ],
     );
   }
 
@@ -323,15 +948,15 @@ class _HomeScreenState extends State<HomeScreen>
     return Row(
       children: [
         Container(
-          width: 48,
-          height: 48,
+          width: 42,
+          height: 42,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               colors: [_kCyan, Color(0xFF007A8C)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
                 color: _kCyan.withValues(alpha: 0.3),
@@ -343,10 +968,10 @@ class _HomeScreenState extends State<HomeScreen>
           child: const Icon(
             Icons.precision_manufacturing,
             color: Colors.white,
-            size: 26,
+            size: 22,
           ),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 12),
         const Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -354,7 +979,7 @@ class _HomeScreenState extends State<HomeScreen>
               Text(
                 'Robotic Arm',
                 style: TextStyle(
-                  fontSize: 24,
+                  fontSize: 20,
                   fontWeight: FontWeight.w800,
                   color: Colors.white,
                   letterSpacing: -0.5,
@@ -363,7 +988,7 @@ class _HomeScreenState extends State<HomeScreen>
               Text(
                 'Voice & Manual Controller',
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 12,
                   fontWeight: FontWeight.w500,
                   color: Colors.white54,
                 ),
@@ -388,10 +1013,10 @@ class _HomeScreenState extends State<HomeScreen>
         : (connecting ? 'CONNECTING...' : 'DISCONNECTED');
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: _kSurface,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: connected
               ? const Color(0xFF00E676).withValues(alpha: 0.2)
@@ -485,7 +1110,7 @@ class _HomeScreenState extends State<HomeScreen>
         splashColor: color.withValues(alpha: 0.2),
         highlightColor: color.withValues(alpha: 0.1),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(30),
@@ -494,13 +1119,13 @@ class _HomeScreenState extends State<HomeScreen>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, color: color, size: 16),
+              Icon(icon, color: color, size: 18),
               const SizedBox(width: 8),
               Text(
                 label,
                 style: TextStyle(
                   color: color,
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.5,
                 ),
@@ -516,10 +1141,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildVoiceSection() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
       decoration: BoxDecoration(
         color: _kSurface,
-        borderRadius: BorderRadius.circular(32),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.2),
@@ -530,33 +1155,92 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       child: Column(
         children: [
-          // Recognized text
-          SizedBox(
-            height: 60,
-            child: Center(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                child: Text(
-                  _recognizedText.isEmpty
-                      ? 'Awaiting command...'
-                      : '"$_recognizedText"',
-                  key: ValueKey(_recognizedText),
-                  style: TextStyle(
-                    fontSize: _recognizedText.isEmpty ? 16 : 22,
-                    fontWeight: _recognizedText.isEmpty
-                        ? FontWeight.w400
-                        : FontWeight.w600,
-                    color: _recognizedText.isEmpty
-                        ? Colors.white38
-                        : Colors.white,
-                    letterSpacing: 0.5,
+          // AI Mode toggle row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.auto_awesome,
+                    size: 16,
+                    color: _aiMode ? _kCyan : Colors.white38,
                   ),
-                  textAlign: TextAlign.center,
-                ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'AI MODE',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: _aiMode ? _kCyan : Colors.white38,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ],
               ),
+              Switch(
+                value: _aiMode,
+                onChanged: (v) => setState(() => _aiMode = v),
+                activeThumbColor: _kCyan,
+                activeTrackColor: _kCyan.withValues(alpha: 0.2),
+                inactiveThumbColor: Colors.white38,
+                inactiveTrackColor: Colors.white12,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          // Recognized text / processing indicator
+          SizedBox(
+            height: 44,
+            child: Center(
+              child: _isProcessingAI
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _kCyan,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          'Parsing with Gemini...',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: _kCyan,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    )
+                  : AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: Text(
+                        _recognizedText.isEmpty
+                            ? 'Awaiting command...'
+                            : '"$_recognizedText"',
+                        key: ValueKey(_recognizedText),
+                        style: TextStyle(
+                          fontSize: _recognizedText.isEmpty ? 16 : 18,
+                          fontWeight: _recognizedText.isEmpty
+                              ? FontWeight.w400
+                              : FontWeight.w600,
+                          color: _recognizedText.isEmpty
+                              ? Colors.white38
+                              : Colors.white,
+                          letterSpacing: 0.3,
+                        ),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
             ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 16),
           // Mic button with pulse animation
           GestureDetector(
             onTap: _toggleListening,
@@ -567,8 +1251,8 @@ class _HomeScreenState extends State<HomeScreen>
                 return Transform.scale(
                   scale: scale,
                   child: Container(
-                    width: 90,
-                    height: 90,
+                    width: 100,
+                    height: 100,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: LinearGradient(
@@ -592,14 +1276,14 @@ class _HomeScreenState extends State<HomeScreen>
                     child: Icon(
                       _isListening ? Icons.graphic_eq : Icons.mic_rounded,
                       color: Colors.white,
-                      size: 40,
+                      size: 44,
                     ),
                   ),
                 );
               },
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 10),
           Text(
             _isListening ? 'LISTENING' : 'TAP TO SPEAK',
             style: TextStyle(
@@ -616,17 +1300,32 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ── Command Status ───────────────────────────────────────────────────
 
+  static const Map<String, String> _cmdLabels = {
+    'L': 'LEFT',
+    'R': 'RIGHT',
+    'U': 'UP',
+    'D': 'DOWN',
+    'P': 'PICK',
+    'O': 'OPEN',
+    'X': 'RESET',
+  };
+
   Widget _buildCommandStatus() {
+    // If we have a sequence, show the visual sequence player
+    if (_pendingSequence.isNotEmpty) {
+      return _buildSequenceDisplay();
+    }
     if (_commandStatus.isEmpty) return const SizedBox.shrink();
-    final bool sent = _commandStatus.contains('Sent');
+    final bool ok =
+        _commandStatus.contains('Sent') || _commandStatus.contains('complete');
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
       decoration: BoxDecoration(
-        color: (sent ? const Color(0xFF00E676) : const Color(0xFFFF9100))
+        color: (ok ? const Color(0xFF00E676) : const Color(0xFFFF9100))
             .withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: (sent ? const Color(0xFF00E676) : const Color(0xFFFF9100))
+          color: (ok ? const Color(0xFF00E676) : const Color(0xFFFF9100))
               .withValues(alpha: 0.3),
         ),
       ),
@@ -634,20 +1333,153 @@ class _HomeScreenState extends State<HomeScreen>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            sent ? Icons.check_circle_outline : Icons.warning_amber_rounded,
-            color: sent ? const Color(0xFF00E676) : const Color(0xFFFF9100),
+            ok ? Icons.check_circle_outline : Icons.warning_amber_rounded,
+            color: ok ? const Color(0xFF00E676) : const Color(0xFFFF9100),
             size: 20,
           ),
           const SizedBox(width: 10),
-          Text(
-            _commandStatus.toUpperCase(),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: sent ? const Color(0xFF00E676) : const Color(0xFFFF9100),
-              letterSpacing: 1,
+          Flexible(
+            child: Text(
+              _commandStatus.toUpperCase(),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: ok ? const Color(0xFF00E676) : const Color(0xFFFF9100),
+                letterSpacing: 1,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSequenceDisplay() {
+    final bool done = _activeSequenceIdx == -1;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: _kSurface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _kCyan.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.route_rounded, size: 16, color: _kCyan),
+              const SizedBox(width: 8),
+              Text(
+                'AI SEQUENCE',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: _kCyan,
+                  letterSpacing: 1.5,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _pendingSequence,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white24,
+                  letterSpacing: 2,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Sequence chips
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: List.generate(_pendingSequence.length, (i) {
+              final char = _pendingSequence[i];
+              final isActive = i == _activeSequenceIdx;
+              final isDone =
+                  done || (_activeSequenceIdx != -1 && i < _activeSequenceIdx);
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: isActive
+                      ? _kCyan.withValues(alpha: 0.2)
+                      : isDone
+                      ? const Color(0xFF00E676).withValues(alpha: 0.1)
+                      : _kBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: isActive
+                        ? _kCyan
+                        : isDone
+                        ? const Color(0xFF00E676).withValues(alpha: 0.5)
+                        : Colors.white12,
+                    width: isActive ? 2 : 1,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      char,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: isActive
+                            ? _kCyan
+                            : isDone
+                            ? const Color(0xFF00E676)
+                            : Colors.white38,
+                      ),
+                    ),
+                    Text(
+                      _cmdLabels[char] ?? char,
+                      style: TextStyle(
+                        fontSize: 8,
+                        fontWeight: FontWeight.w700,
+                        color: isActive
+                            ? _kCyan.withValues(alpha: 0.8)
+                            : isDone
+                            ? const Color(0xFF00E676).withValues(alpha: 0.7)
+                            : Colors.white24,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ),
+          if (done) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Icon(
+                  Icons.check_circle,
+                  size: 14,
+                  color: Color(0xFF00E676),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'SEQUENCE COMPLETE',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF00E676),
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -661,7 +1493,7 @@ class _HomeScreenState extends State<HomeScreen>
       children: [
         // Section label
         Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 16),
+          padding: const EdgeInsets.only(left: 4, bottom: 10),
           child: Text(
             'MANUAL OVERRIDE',
             style: TextStyle(
@@ -674,10 +1506,10 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         // D-Pad Wrapper
         Container(
-          padding: const EdgeInsets.symmetric(vertical: 24),
+          padding: const EdgeInsets.symmetric(vertical: 20),
           decoration: BoxDecoration(
             color: _kSurface,
-            borderRadius: BorderRadius.circular(32),
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
             boxShadow: [
               BoxShadow(
@@ -704,7 +1536,7 @@ class _HomeScreenState extends State<HomeScreen>
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         // Action row
         Row(
           children: [
@@ -742,8 +1574,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _dpadButton(IconData icon, String command) {
     return Container(
-      width: 64,
-      height: 64,
+      width: 72,
+      height: 72,
       decoration: BoxDecoration(
         color: _kBg,
         borderRadius: BorderRadius.circular(20),
@@ -767,7 +1599,7 @@ class _HomeScreenState extends State<HomeScreen>
             child: Icon(
               icon,
               color: Colors.white.withValues(alpha: 0.8),
-              size: 30,
+              size: 34,
             ),
           ),
         ),
@@ -802,10 +1634,10 @@ class _HomeScreenState extends State<HomeScreen>
           splashColor: color.withValues(alpha: 0.2),
           highlightColor: color.withValues(alpha: 0.1),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 18),
+            padding: const EdgeInsets.symmetric(vertical: 20),
             child: Column(
               children: [
-                Icon(icon, color: color, size: 26),
+                Icon(icon, color: color, size: 28),
                 const SizedBox(height: 8),
                 Text(
                   label,
